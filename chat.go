@@ -55,12 +55,8 @@ func (c *Chat) Start() {
 }
 
 func (c *Chat) SendMessage(mess string) {
-	fmt.Println(len(c.peers))
 	for _, peer := range c.peers {
-		if err := p2p.Send(peer.RW, 0, mess); err != nil {
-			fmt.Printf("Fail send message err %s", err)
-			return
-		}
+		peer.Send(mess)
 	}
 }
 

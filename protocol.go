@@ -65,3 +65,10 @@ type Peer struct {
 	Peer *p2p.Peer
 	RW   p2p.MsgReadWriter
 }
+
+func (p *Peer) Send(mess string) {
+	if err := p2p.Send(p.RW, 0, mess); err != nil {
+		fmt.Printf("Fail send message err %s", err)
+		return
+	}
+}
