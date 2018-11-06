@@ -42,9 +42,11 @@ func decoreteProto(validetPeer chan *Peer) func(p *p2p.Peer, rw p2p.MsgReadWrite
 		wg.Add(1)
 		RxMessage(ctx, cancel, validetPeer, peer, &wg, errorC)
 
+		err := <-errorC
+
 		wg.Wait()
 
-		return <-errorC
+		return err
 	}
 }
 
@@ -54,12 +56,12 @@ func TxMessage(ctx context.Context, cancel context.CancelFunc, peer *Peer, wg *s
 		for {
 			select {
 			case <-ctx.Done():
-				return
+				break breakLoop
 			case message := <-peer.OutC:
 				if err := p2p.Send(peer.RW, MessageCode, message); err != nil {
 					fmt.Printf("Fail send message err %s", err)
-					errorC <- err
 					cancel()
+					errorC <- err
 					break breakLoop
 				}
 			}
@@ -71,40 +73,47 @@ func TxMessage(ctx context.Context, cancel context.CancelFunc, peer *Peer, wg *s
 
 func RxMessage(ctx context.Context, cancel context.CancelFunc, validetPeer chan *Peer, peer *Peer, wg *sync.WaitGroup, errorC chan error) {
 	go func() {
+	breakLoop:
 		for {
-			inmsg, err := peer.RW.ReadMsg()
+			select {
+			case <-ctx.Done():
+				break breakLoop
+			default:
+				inmsg, err := peer.RW.ReadMsg()
 
-			if inmsg.Code != MessageCode {
-				fmt.Println("Receive wrong message status code")
-				continue
-			}
-
-			if err != nil {
-				if err == io.EOF {
-					validetPeer <- peer
-					fmt.Printf("%s: peer disconnected \n", peer.Name)
-
-					errorC <- err
-					cancel()
-					break
-				} else {
-					fmt.Printf("%s: message read failed: %s \n", peer.Name, err)
+				if inmsg.Code != MessageCode {
+					fmt.Println("Receive wrong message status code")
 					continue
 				}
+
+				if err != nil {
+					if err == io.EOF {
+						validetPeer <- peer
+						fmt.Printf("%s: peer disconnected \n", peer.Name)
+
+						cancel()
+						errorC <- err
+						break breakLoop
+
+					} else {
+						fmt.Printf("%s: message read failed: %s \n", peer.Name, err)
+						continue
+					}
+				}
+
+				var mess string
+				err = inmsg.Decode(&mess)
+
+				if err != nil {
+					fmt.Println("Fail decode p2p message", err)
+					cancel()
+					errorC <- err
+					break breakLoop
+				}
+
+				fmt.Printf("[%s]: %s", peer.Name, mess)
 			}
 
-			var mess string
-			err = inmsg.Decode(&mess)
-
-			if err != nil {
-				fmt.Println("Fail decode p2p message", err)
-
-				errorC <- err
-				cancel()
-				break
-			}
-
-			fmt.Printf("[%s]: %s", peer.Name, mess)
 		}
 
 		wg.Done()
