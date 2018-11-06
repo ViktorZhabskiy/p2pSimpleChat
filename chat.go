@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"fmt"
 	"log"
 
-	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
@@ -14,13 +14,14 @@ type Chat struct {
 	srv            *p2p.Server
 	peers          map[enode.ID]*Peer
 	bootstrapNodes []string
+	ctx            context.Context
 }
 
-func InitChat(conf FileConf, privKey *ecdsa.PrivateKey) *Chat {
+func InitChat(ctx context.Context, conf FileConf, privKey *ecdsa.PrivateKey) *Chat {
 	fmt.Println("Init Chat")
 
 	peers := make(map[enode.ID]*Peer)
-	var validatePeer = make(chan Peer)
+	var validatePeer = make(chan *Peer)
 
 	go CheckPeer(validatePeer, peers)
 
@@ -36,6 +37,7 @@ func InitChat(conf FileConf, privKey *ecdsa.PrivateKey) *Chat {
 		},
 		peers:          peers,
 		bootstrapNodes: conf.BootstrapNodes,
+		ctx:            ctx,
 	}
 }
 
@@ -48,9 +50,10 @@ func (c *Chat) Start() {
 	}
 
 	fmt.Println("Node info: ", c.srv.Self())
-	// c.subscribe()
+
 	c.connectNodes()
 	fmt.Println("-Stated!-")
+	fmt.Printf("Your name:[%s] \n", c.srv.Config.Name)
 
 }
 
@@ -69,25 +72,4 @@ func (c *Chat) connectNodes() {
 
 		c.srv.AddPeer(peer)
 	}
-}
-
-func (c *Chat) subscribe() {
-	eventOneC := make(chan *p2p.PeerEvent)
-	sub_one := c.srv.SubscribeEvents(eventOneC)
-	go func(sub_one event.Subscription) {
-		for {
-			peerevent := <-eventOneC
-			switch peerevent.Type {
-			case p2p.PeerEventTypeAdd:
-				fmt.Printf("New peer %s connect \n", peerevent.Peer)
-			case p2p.PeerEventTypeDrop:
-				fmt.Printf("peer %s disconnect \n", peerevent.Peer)
-				delete(c.peers, peerevent.Peer)
-			case p2p.PeerEventTypeMsgRecv:
-				fmt.Println(peerevent)
-			default:
-				fmt.Println("Unknown peer event type")
-			}
-		}
-	}(sub_one)
 }

@@ -2,8 +2,12 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/BurntSushi/toml"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -19,10 +23,13 @@ func main() {
 		log.Fatal("Generate private key failed", err)
 	}
 
-	chat := InitChat(conf, privKey)
+	ctx, cancel := context.WithCancel(context.Background())
+	handleStopProgramm(ctx, cancel)
+
+	chat := InitChat(ctx, conf, privKey)
 	chat.Start()
 
-	go handleInput(chat)
+	go handleInput(ctx, chat)
 
 	select {}
 }
@@ -42,16 +49,35 @@ func parseConf(filePath string) FileConf {
 	return conf
 }
 
-func handleInput(c *Chat) {
+func handleStopProgramm(ctx context.Context, cancel context.CancelFunc) {
+	sigC := make(chan os.Signal, 1)
+	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
-		r := bufio.NewReader(os.Stdin)
-		message, err := r.ReadString('\n')
-		if err != nil {
-			return
-		}
-		c.SendMessage(message)
+		sig := <-sigC
+		log.Printf("%s signal received. shuting down!", sig)
+		cancel()
+		os.Exit(0)
+	}()
+}
 
-		os.Stdin.Close()
+func handleInput(ctx context.Context, c *Chat) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				os.Stdin.Close()
+				return
+			default:
+				r := bufio.NewReader(os.Stdin)
+				message, err := r.ReadString('\n')
+				if err != nil {
+					fmt.Println("Fail read from stdin: ", err)
+					return
+				}
+				c.SendMessage(message)
+			}
+
+		}
 	}()
 
 	return
