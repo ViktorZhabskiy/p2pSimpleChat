@@ -24,12 +24,13 @@ func main() {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	handleStopProgramm(ctx, cancel)
 
 	chat := InitChat(ctx, conf, privKey)
 	chat.Start()
 
 	go handleInput(ctx, chat)
+
+	handleStopProgramm(ctx, cancel)
 
 	select {}
 }
@@ -53,10 +54,9 @@ func handleStopProgramm(ctx context.Context, cancel context.CancelFunc) {
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
-		sig := <-sigC
-		log.Printf("%s signal received. shuting down!", sig)
+		<-sigC
 		cancel()
-		os.Exit(0)
+		log.Println("signal received shutting down!")
 	}()
 }
 

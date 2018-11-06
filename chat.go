@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -49,18 +50,30 @@ func (c *Chat) Start() {
 		log.Fatal("Start p2p.Server failed", err)
 	}
 
-	fmt.Println("Node info: ", c.srv.Self())
+	fmt.Println("Node info:", c.srv.Self())
 
 	c.connectNodes()
 	fmt.Println("-Stated!-")
 	fmt.Printf("Your name:[%s] \n", c.srv.Config.Name)
 
+	c.wait()
 }
 
 func (c *Chat) SendMessage(mess string) {
 	for _, peer := range c.peers {
 		peer.Send(mess)
 	}
+}
+
+func (c *Chat) wait() {
+	go func() {
+		<-c.ctx.Done()
+		c.srv.Stop()
+		fmt.Println("P2P server stop!")
+		c.peers = nil
+		os.Exit(0)
+	}()
+
 }
 
 func (c *Chat) connectNodes() {
