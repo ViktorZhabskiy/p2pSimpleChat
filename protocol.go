@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
-func createProtocol(validetPeer chan Peer) p2p.Protocol {
+func createProtocol(validetPeer chan *Peer) p2p.Protocol {
 	return p2p.Protocol{
 		Name:    "chat",
 		Version: 1,
@@ -17,58 +18,88 @@ func createProtocol(validetPeer chan Peer) p2p.Protocol {
 	}
 }
 
-func decoreteProto(validetPeer chan Peer) func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+func decoreteProto(validetPeer chan *Peer) func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
 	return func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+		outC := make(chan string)
+		errorC := make(chan error)
 
-		validetPeer <- Peer{p, rw}
+		peer := &Peer{
+			Peer: p,
+			RW:   rw,
+			OutC: outC,
+			Name: fmt.Sprintf("%s(%s)", p.Name(), p.RemoteAddr().String()),
+		}
 
-		inmsg, err := rw.ReadMsg()
-		if err != nil {
-			if err == io.EOF {
-				validetPeer <- Peer{p, rw}
-				fmt.Printf("%s(%s): peer disconnected \n", p.Name(), p.RemoteAddr().String())
-			} else {
-				fmt.Printf("%s(%s): message read failed: %s \n", p.Name(), p.RemoteAddr().String(), err)
+		validetPeer <- peer
+
+		wg := sync.WaitGroup{}
+		ctx, cancel := context.WithCancel(context.Background())
+		wg.Add(1)
+		TxMessage(ctx, cancel, peer, &wg, errorC)
+
+		wg.Add(1)
+		RxMessage(ctx, cancel, validetPeer, peer, &wg, errorC)
+
+		wg.Wait()
+
+		return <-errorC
+	}
+}
+
+func TxMessage(ctx context.Context, cancel context.CancelFunc, peer *Peer, wg *sync.WaitGroup, errorC chan error) {
+	go func() {
+	breakLoop:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case message := <-peer.OutC:
+				if err := p2p.Send(peer.RW, 0, message); err != nil {
+					fmt.Printf("Fail send message err %s", err)
+					errorC <- err
+					cancel()
+					break breakLoop
+				}
 			}
-			return err
 		}
 
-		var mess string
-		err = inmsg.Decode(&mess)
-		if err != nil {
-			fmt.Println(err)
-		}
-
-		fmt.Printf("%s", mess)
-
-		return nil
-	}
+		wg.Done()
+	}()
 }
 
-func CheckPeer(validetPeer chan Peer, peers map[enode.ID]*Peer) {
-	for {
-		p := <-validetPeer
-		if _, ok := peers[p.Peer.ID()]; !ok {
-			fmt.Printf("New peer %s(%s) connect \n", p.Peer.Name(), p.Peer.RemoteAddr().String())
-			peers[p.Peer.ID()] = &Peer{
-				Peer: p.Peer,
-				RW:   p.RW,
+func RxMessage(ctx context.Context, cancel context.CancelFunc, validetPeer chan *Peer, peer *Peer, wg *sync.WaitGroup, errorC chan error) {
+	go func() {
+		for {
+			inmsg, err := peer.RW.ReadMsg()
+
+			if err != nil {
+				if err == io.EOF {
+					validetPeer <- peer
+					fmt.Printf("%s: peer disconnected \n", peer.Name)
+
+					errorC <- err
+					cancel()
+					break
+				} else {
+					fmt.Printf("%s: message read failed: %s \n", peer.Name, err)
+					continue
+				}
 			}
-		} else {
-			delete(peers, p.Peer.ID())
+
+			var mess string
+			err = inmsg.Decode(&mess)
+
+			if err != nil {
+				fmt.Println("Fail decode p2p message", err)
+
+				errorC <- err
+				cancel()
+				break
+			}
+
+			fmt.Printf("[%s]: %s", peer.Name, mess)
 		}
-	}
 
-}
-
-type Peer struct {
-	Peer *p2p.Peer
-	RW   p2p.MsgReadWriter
-}
-
-func (p *Peer) Send(mess string) {
-	if err := p2p.Send(p.RW, 0, mess); err != nil {
-		fmt.Printf("Fail send message err %s", err)
-		return
-	}
+		wg.Done()
+	}()
 }
