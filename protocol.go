@@ -9,6 +9,8 @@ import (
 	"github.com/ethereum/go-ethereum/p2p"
 )
 
+const MessageCode = 0
+
 func createProtocol(validetPeer chan *Peer) p2p.Protocol {
 	return p2p.Protocol{
 		Name:    "chat",
@@ -54,7 +56,7 @@ func TxMessage(ctx context.Context, cancel context.CancelFunc, peer *Peer, wg *s
 			case <-ctx.Done():
 				return
 			case message := <-peer.OutC:
-				if err := p2p.Send(peer.RW, 0, message); err != nil {
+				if err := p2p.Send(peer.RW, MessageCode, message); err != nil {
 					fmt.Printf("Fail send message err %s", err)
 					errorC <- err
 					cancel()
@@ -71,6 +73,11 @@ func RxMessage(ctx context.Context, cancel context.CancelFunc, validetPeer chan 
 	go func() {
 		for {
 			inmsg, err := peer.RW.ReadMsg()
+
+			if inmsg.Code != MessageCode {
+				fmt.Println("Receive wrong message status code")
+				continue
+			}
 
 			if err != nil {
 				if err == io.EOF {
