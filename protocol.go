@@ -11,16 +11,16 @@ import (
 
 const MessageCode = 0
 
-func createProtocol(validetPeer chan *Peer) p2p.Protocol {
+func createProtocol(storage *Storage) p2p.Protocol {
 	return p2p.Protocol{
 		Name:    "chat",
 		Version: 1,
 		Length:  1,
-		Run:     decoreteProto(validetPeer),
+		Run:     decorateProto(storage),
 	}
 }
 
-func decoreteProto(validetPeer chan *Peer) func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+func decorateProto(storage *Storage) func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
 	return func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
 		outC := make(chan string)
 		errorC := make(chan error)
@@ -32,15 +32,14 @@ func decoreteProto(validetPeer chan *Peer) func(p *p2p.Peer, rw p2p.MsgReadWrite
 			Name: fmt.Sprintf("%s(%s)", p.Name(), p.RemoteAddr().String()),
 		}
 
-		validetPeer <- peer
+		storage.PeerC <- peer
 
 		wg := sync.WaitGroup{}
 		ctx, cancel := context.WithCancel(context.Background())
-		wg.Add(1)
+
 		TxMessage(ctx, cancel, peer, &wg, errorC)
 
-		wg.Add(1)
-		RxMessage(ctx, cancel, validetPeer, peer, &wg, errorC)
+		RxMessage(ctx, cancel, storage.DeletePC, peer, &wg, errorC)
 
 		err := <-errorC
 
@@ -51,6 +50,8 @@ func decoreteProto(validetPeer chan *Peer) func(p *p2p.Peer, rw p2p.MsgReadWrite
 }
 
 func TxMessage(ctx context.Context, cancel context.CancelFunc, peer *Peer, wg *sync.WaitGroup, errorC chan error) {
+	wg.Add(1)
+
 	go func() {
 	breakLoop:
 		for {
@@ -71,7 +72,9 @@ func TxMessage(ctx context.Context, cancel context.CancelFunc, peer *Peer, wg *s
 	}()
 }
 
-func RxMessage(ctx context.Context, cancel context.CancelFunc, validetPeer chan *Peer, peer *Peer, wg *sync.WaitGroup, errorC chan error) {
+func RxMessage(ctx context.Context, cancel context.CancelFunc, deletePC chan *Peer, peer *Peer, wg *sync.WaitGroup, errorC chan error) {
+	wg.Add(1)
+
 	go func() {
 	breakLoop:
 		for {
@@ -88,8 +91,7 @@ func RxMessage(ctx context.Context, cancel context.CancelFunc, validetPeer chan 
 
 				if err != nil {
 					if err == io.EOF {
-						validetPeer <- peer
-						fmt.Printf("%s: peer disconnected \n", peer.Name)
+						deletePC <- peer
 
 						cancel()
 						errorC <- err
